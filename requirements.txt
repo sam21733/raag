@@ -1,8 +1,1 @@
-streamlit
-langchain
-langchain-community
-langchain-google-genai
-sentence-transformers
-faiss-cpu
-pypdf
-python-dotenv
+pip install streamlit pypdf langchain faiss-cpu sentence-transformers openai
