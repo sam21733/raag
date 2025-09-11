@@ -1,6 +1,7 @@
 streamlit 
-pypdf
 langchain 
-faiss-cpu 
 sentence-transformers 
-openai
+faiss-cpu 
+langchain-google-genai 
+python-dotenv 
+pypdf
