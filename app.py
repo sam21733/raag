@@ -1,51 +1,66 @@
+# app.py
 import streamlit as st
-from PyPDF2 import PdfReader
+from langchain.document_loaders import PyPDFLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain.embeddings import SentenceTransformerEmbeddings
 from langchain.vectorstores import FAISS
-from langchain.embeddings import HuggingFaceEmbeddings
-from langchain.chat_models import ChatOpenAI
-from langchain.chains import ConversationalRetrievalChain
+from langchain.chains import RetrievalQA
+from langchain_google_genai import ChatGoogleGenerativeAI
+import os
+from dotenv import load_dotenv
 
-# --- Streamlit Page Config ---
-st.set_page_config(page_title="Simple RAG App", layout="wide")
-st.title("📄 Simple RAG with PDF + Streamlit")
+# Load environment variables
+load_dotenv()
+api_key = os.getenv("GOOGLE_API_KEY")
 
-# --- File Upload ---
+# Streamlit UI
+st.set_page_config(page_title="RAG App", page_icon="📘")
+st.title("📘 Retrieval-Augmented Generation (RAG) App")
+
 uploaded_file = st.file_uploader("Upload a PDF file", type=["pdf"])
 
-if uploaded_file:
-    # --- Extract Text from PDF ---
-    pdf_reader = PdfReader(uploaded_file)
-    text = ""
-    for page in pdf_reader.pages:
-        text += page.extract_text()
+if uploaded_file is not None:
+    with open("temp.pdf", "wb") as f:
+        f.write(uploaded_file.read())
 
-    # --- Split into Chunks ---
-    splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
-    chunks = splitter.split_text(text)
+    # Load PDF
+    loader = PyPDFLoader("temp.pdf")
+    documents = loader.load()
 
-    # --- Embeddings + Vectorstore ---
-    embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
-    vectorstore = FAISS.from_texts(chunks, embeddings)
+    # Split into chunks
+    text_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=1000, chunk_overlap=200, length_function=len, add_start_index=True
+    )
+    docs = text_splitter.split_documents(documents)
 
-    # --- Retriever + LLM Chain ---
-    retriever = vectorstore.as_retriever()
-    qa_chain = ConversationalRetrievalChain.from_llm(
-        ChatOpenAI(model="gpt-3.5-turbo", temperature=0),  # Replace with Groq/Ollama if needed
-        retriever=retriever
+    # Embeddings
+    embedding_model_name = "sentence-transformers/all-MiniLM-L6-v2"
+    embedding_function = SentenceTransformerEmbeddings(model_name=embedding_model_name)
+
+    # Vector DB
+    vector_store = FAISS.from_documents(docs, embedding_function)
+    retriever = vector_store.as_retriever()
+
+    # LLM
+    llm = ChatGoogleGenerativeAI(
+        temperature=0, model="gemini-1.5-flash", api_key=api_key
     )
 
-    # --- Chat Memory ---
-    if "chat_history" not in st.session_state:
-        st.session_state.chat_history = []
+    # QA Chain
+    qa_chain = RetrievalQA.from_chain_type(
+        llm=llm, chain_type="stuff", retriever=retriever, return_source_documents=True
+    )
 
-    # --- User Query ---
-    query = st.text_input("Ask a question about the PDF:")
+    st.success("✅ Document uploaded and processed!")
+
+    query = st.text_input("Ask a question about the document:")
     if query:
-        result = qa_chain({"question": query, "chat_history": st.session_state.chat_history})
-        st.session_state.chat_history.append((query, result["answer"]))
+        response = qa_chain({"query": query})
 
-    # --- Display Chat ---
-    for q, a in st.session_state.chat_history:
-        st.write(f"**You:** {q}")
-        st.write(f"**Bot:** {a}")
+        st.subheader("Answer")
+        st.write(response["result"])
+
+        with st.expander("Show Sources"):
+            for doc in response["source_documents"]:
+                st.markdown(f"**Page Source:** {doc.metadata['source']}")
+                st.write(doc.page_content[:500] + "...")
